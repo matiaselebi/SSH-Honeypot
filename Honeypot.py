@@ -1,11 +1,64 @@
+import os
 import socket
 import logging
 import paramiko
 import threading
+import sqlite3
+import requests
+from datetime import datetime
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logging.getLogger("paramiko").setLevel(logging.CRITICAL)
-HOST_KEY = paramiko.RSAKey.generate(2048)
+
+def cargar_o_generar_clave():
+    archivo_clave = 'honeypot_rsa.key'
+    if os.path.exists(archivo_clave):
+        return paramiko.RSAKey.from_private_key_file(archivo_clave)
+    else:
+        clave = paramiko.RSAKey.generate(2048)
+        clave.write_private_key_file(archivo_clave)
+        return clave
+
+HOST_KEY = cargar_o_generar_clave()
+
+def inicializar_db():
+    conexion = sqlite3.connect('registros.db')
+    cursor = conexion.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS intentos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha TEXT,
+            ip TEXT,
+            pais TEXT,
+            ciudad TEXT,
+            usuario TEXT,
+            contrasena TEXT
+        )
+    ''')
+    conexion.commit()
+    conexion.close()
+
+def obtener_ubicacion(ip):
+    if ip == '127.0.0.1' or ip.startswith('192.168.'):
+        return "Local", "Red Interna"
+    try:
+        respuesta = requests.get(f"http://ip-api.com/json/{ip}", timeout=5).json()
+        if respuesta.get('status') == 'success':
+            return respuesta.get('country', 'Desconocido'), respuesta.get('city', 'Desconocida')
+    except Exception:
+        pass
+    return "Desconocido", "Desconocida"
+
+def registrar_intento(ip, usuario, contrasena):
+    pais, ciudad = obtener_ubicacion(ip)
+    conexion = sqlite3.connect('registros.db')
+    cursor = conexion.cursor()
+    fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute("INSERT INTO intentos (fecha, ip, pais, ciudad, usuario, contrasena) VALUES (?, ?, ?, ?, ?, ?)", 
+                   (fecha_actual, ip, pais, ciudad, usuario, contrasena))
+    conexion.commit()
+    conexion.close()
+    return pais, ciudad
 
 class ServidorSSH(paramiko.ServerInterface):
     def __init__(self, cliente_ip):
@@ -18,7 +71,8 @@ class ServidorSSH(paramiko.ServerInterface):
         return paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
 
     def check_auth_password(self, username, password):
-        logging.info(f"Intento de login - IP: {self.cliente_ip} - Usuario: {username} - Contrasena: {password}")
+        pais, ciudad = registrar_intento(self.cliente_ip, username, password)
+        logging.info(f"Login - IP: {self.cliente_ip} ({ciudad}, {pais}) - User: {username} - Pass: {password}")
         return paramiko.AUTH_FAILED
 
 def manejar_conexion(cliente, direccion):
@@ -45,6 +99,7 @@ def manejar_conexion(cliente, direccion):
         transporte.close()
 
 def iniciar_honeypot():
+    inicializar_db()
     puerto = 2222
     servidor = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     servidor.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
