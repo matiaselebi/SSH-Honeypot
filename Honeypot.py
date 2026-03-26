@@ -6,6 +6,11 @@ import threading
 import sqlite3
 import requests
 from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logging.getLogger("paramiko").setLevel(logging.CRITICAL)
@@ -49,6 +54,19 @@ def obtener_ubicacion(ip):
         pass
     return "Desconocido", "Desconocida"
 
+def enviar_alerta_telegram(ip, pais, ciudad, usuario, contrasena):
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        return
+    
+    mensaje = f"Alerta Honeypot SSH\nIP: {ip} ({ciudad}, {pais})\nUsuario: {usuario}\nClave: {contrasena}"
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    datos = {"chat_id": TELEGRAM_CHAT_ID, "text": mensaje}
+    
+    try:
+        requests.post(url, data=datos, timeout=5)
+    except Exception:
+        pass
+
 def registrar_intento(ip, usuario, contrasena):
     pais, ciudad = obtener_ubicacion(ip)
     conexion = sqlite3.connect('registros.db')
@@ -73,6 +91,7 @@ class ServidorSSH(paramiko.ServerInterface):
     def check_auth_password(self, username, password):
         pais, ciudad = registrar_intento(self.cliente_ip, username, password)
         logging.info(f"Login - IP: {self.cliente_ip} ({ciudad}, {pais}) - User: {username} - Pass: {password}")
+        enviar_alerta_telegram(self.cliente_ip, pais, ciudad, username, password)
         return paramiko.AUTH_FAILED
 
 def manejar_conexion(cliente, direccion):
