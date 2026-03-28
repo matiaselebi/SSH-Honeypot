@@ -1,3 +1,4 @@
 paramiko
 requests
 python-dotenv
+boto3

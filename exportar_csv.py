@@ -1,5 +1,6 @@
 import sqlite3
 import csv
+import boto3
 
 def exportar_datos():
     try:
@@ -15,6 +16,11 @@ def exportar_datos():
         
         conexion.close()
         print("Datos exportados exitosamente a reporte_honeypot.csv")
+
+        s3 = boto3.client('s3')
+        s3.upload_file('reporte_honeypot.csv', 's3-honeypot', 'reporte_honeypot.csv')
+        print("Archivo subido a S3 correctamente")
+
     except Exception as e:
         print(f"Error al exportar los datos: {e}")
 

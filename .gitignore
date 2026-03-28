@@ -210,3 +210,4 @@ __marimo__/
 *.key
 .env
 *.csv
+*.pem
